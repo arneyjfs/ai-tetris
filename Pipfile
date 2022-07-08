@@ -5,6 +5,11 @@ name = "pypi"
 
 [packages]
 pygame = "*"
+tensorflow-macos = "*"
+tensorflow-metal = "*"
+numpy = "*"
+pandas = "*"
+tqdm = "*"
 
 [dev-packages]
 
