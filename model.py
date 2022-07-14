@@ -8,11 +8,15 @@ from keras.layers import Input, BatchNormalization
 from keras.callbacks import TensorBoard
 from keras.models import Model
 from keras.optimizers import Adam
+from keras import backend as K
 import tensorflow as tf
 from tqdm import tqdm
 import random
 import os
 from tetris.tetris import Environment
+config = tf.compat.v1.ConfigProto()
+config.gpu_options.allow_growth=True
+sess = tf.compat.v1.Session(config=config)
 
 # For more repetitive results
 random.seed(1)
@@ -76,6 +80,7 @@ class ModifiedTensorBoard(TensorBoard):
                 self.writer.flush()
 
 
+# tensorboard_callback = TensorBoard(log_dir='logs')
 ######################################################################################
 # Agent class
 class DQNAgent:
@@ -137,7 +142,7 @@ class DQNAgent:
 
         # Put it all together:
         model = Model(inputs=input_layer, outputs=[output])
-        model.compile(optimizer=Adam(lr=0.01),  # 0.001
+        model.compile(optimizer=Adam(learning_rate=LEARNING_RATE, beta_1=0.99),  # 0.001
                       loss={'output': 'mse'},
                       metrics={'output': 'accuracy'})
 
@@ -149,10 +154,8 @@ class DQNAgent:
         self.replay_memory.append(transition)
 
     # Trains main network every step during episode
-    def train(self, terminal_state, step):
+    def train(self, terminal_state, step, episode):
         # Start training only if certain number of samples is already saved
-        if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
-            return
 
         # Get a minibatch of random samples from memory replay table
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
@@ -193,6 +196,8 @@ class DQNAgent:
                        y=np.array(y),
                        batch_size=MINIBATCH_SIZE, verbose=0,
                        shuffle=False, callbacks=[self.tensorboard] if terminal_state else None)
+        if episode % 100 == 0:
+            K.clear_session()
 
         # Update target network counter every episode
         if terminal_state:
@@ -209,6 +214,13 @@ class DQNAgent:
 
 
 ######################################################################################
+def get_lr():
+    progress = CURRENT_EPISODE / EPISODES
+    delta = INITIAL_LR - FINAL_LR
+    lr = INITIAL_LR - (progress * delta)
+    return lr
+
+
 def save_model_and_weights(agent, model_name, episode, max_reward, average_reward, min_reward):
     checkpoint_name = f"{model_name}| Eps({episode}) | max({max_reward:_>7.2f}) | avg({average_reward:_>7.2f}) | min({min_reward:_>7.2f}).model"
     agent.model.save(f'{PATH}models/{checkpoint_name}')
@@ -222,33 +234,43 @@ def to_numpy_and_flatten(xss):
 # ## Constants:
 # RL Constants:
 DISCOUNT = 0.99
+INITIAL_LR = 0.01
+FINAL_LR = 0.0001
+LEARNING_RATE = get_lr
 REPLAY_MEMORY_SIZE = 3_000  # How many last steps to keep for model training
 MIN_REPLAY_MEMORY_SIZE = 1_000  # Minimum number of steps in a memory to start training
 UPDATE_TARGET_EVERY = 20  # Terminal states (end of episodes)
 MIN_REWARD = 1000  # For model save
 SAVE_MODEL_EVERY = 1000  # Episodes
-SHOW_EVERY = 1  # Episodes
-EPISODES = 1000  # Number of episodes
+SHOW_EVERY = 20  # Episodes
+EPISODES = 5000  # Number of episodes
 #  Stats settings
 AGGREGATE_STATS_EVERY = 20  # episodes
-SHOW_PREVIEW = True
+SHOW_PREVIEW = False
+INITIAL_HUMAN_ACTIONS = 0  # must be >= MINIBATCH_SIZE or ==0
 ######################################################################################
+CURRENT_EPISODE = 0
 # Models Arch :
 # [{[conv_list], [dense_list], [util_list], MINIBATCH_SIZE, {EF_Settings}, {ECC_Settings}} ]
 
 models_arch = [
-                {"conv_list": [32], "dense_list": [32, 32], "util_list": ["ECC2", "1A-5Ac"],
-                "MINIBATCH_SIZE": 128, "best_only": False,
-                "EF_Settings": {"EF_Enabled": False},
-                "ECC_Settings": {"ECC_Enabled": False}},
-               {"conv_list": [32], "dense_list": [32, 32, 32], "util_list": ["ECC2", "1A-5Ac"],
-                "MINIBATCH_SIZE": 128, "best_only": False,
-                "EF_Settings": {"EF_Enabled": False},
-                "ECC_Settings": {"ECC_Enabled": False}},
-               {"conv_list": [32], "dense_list": [32, 32], "util_list": ["ECC2", "1A-5Ac"],
-                "MINIBATCH_SIZE": 128, "best_only": False,
-                "EF_Settings": {"EF_Enabled": True, "FLUCTUATIONS": 2},
-                "ECC_Settings": {"ECC_Enabled": True, "MAX_EPS_NO_INC": int(EPISODES * 0.2)}}]
+    # {"conv_list": [32], "dense_list": [32, 32], "util_list": ["ECC2", "1A-5Ac"],
+    #  "MINIBATCH_SIZE": 128, "best_only": False,
+    #  "EF_Settings": {"EF_Enabled": False},
+    #  "ECC_Settings": {"ECC_Enabled": False}},
+    # {"conv_list": [32], "dense_list": [32, 32, 32], "util_list": ["ECC2", "1A-5Ac"],
+    #  "MINIBATCH_SIZE": 128, "best_only": False,
+    #  "EF_Settings": {"EF_Enabled": False},
+    #  "ECC_Settings": {"ECC_Enabled": False}},
+    # {"conv_list": [32], "dense_list": [32, 32], "util_list": ["ECC2", "1A-5Ac"],
+    #  "MINIBATCH_SIZE": 128, "best_only": False,
+    #  "EF_Settings": {"EF_Enabled": True, "FLUCTUATIONS": 2},
+    #  "ECC_Settings": {"ECC_Enabled": True, "MAX_EPS_NO_INC": int(EPISODES * 0.2)}}
+    {"conv_list": [32], "dense_list": [32, 32, 32], "util_list": ["ECC2", "1A-5Ac"],
+     "MINIBATCH_SIZE": 128, "best_only": False,
+     "EF_Settings": {"EF_Enabled": True, "FLUCTUATIONS": 2},
+     "ECC_Settings": {"ECC_Enabled": True, "MAX_EPS_NO_INC": int(EPISODES * 0.2)}}
+]
 
 # A dataframe used to store grid search results
 res = pd.DataFrame(columns=["Model Name", "Convolution Layers", "Dense Layers", "Batch Size", "ECC", "EF",
@@ -305,6 +327,7 @@ for i, m in enumerate(models_arch):
     # Iterate over episodes
     episode_count = 0
     for episode in range(1, EPISODES + 1):  # tqdm(, ascii=True, unit='episode'):
+        CURRENT_EPISODE = episode
         if m["best_only"]: agent.model.set_weights(best_weights[0])
         # agent.target_model.set_weights(best_weights[0])
 
@@ -315,10 +338,26 @@ for i, m in enumerate(models_arch):
         # Restarting episode - reset episode reward and step number
         episode_reward = 0
         step = 1
-        action = 0
+        action = None
         # Reset environment and get initial state
         current_state = to_numpy_and_flatten(env.reset())
         game_over = env.game_over
+
+        if INITIAL_HUMAN_ACTIONS > 0 and len(agent.replay_memory) <= INITIAL_HUMAN_ACTIONS:
+            while not game_over:
+                print(f'recorded plays: {len(agent.replay_memory)}')
+                action = env.get_action()
+                quit_, new_state, reward, game_over = env.step(action, draw=True)
+                new_state = to_numpy_and_flatten(new_state)
+                episode_reward += reward
+                if action in [0, 1, 2, 3, 4]:
+                    if INITIAL_HUMAN_ACTIONS > 0 and INITIAL_HUMAN_ACTIONS < MINIBATCH_SIZE:
+                        raise Exception('INITIAL_HUMAN_ACTIONS must be bigger than MINIBATCH_SIZE or 0')
+                    agent.update_replay_memory((current_state, action, reward, new_state, game_over))
+            if len(agent.replay_memory) >= INITIAL_HUMAN_ACTIONS:
+                for i in range(100):
+                    agent.train(game_over, step)
+
         while not game_over:
             # This part stays mostly the same, the change is to query a model for Q values
             if np.random.random() > epsilon:
@@ -329,30 +368,21 @@ for i, m in enumerate(models_arch):
                 # Get random action 
                 action = choice(env.ACTION_SPACE)
 
-            if action == 0:
-                action_ = 'rotate'
-            if action == 1:
-                action_ = 'left'
-            if action == 2:
-                action_ ='right'
-            if action == 3:
-                action_ = 'space'
-
             draw = False
             # Uncomment the next block if you want to show preview on your screen
             if SHOW_PREVIEW and not episode % SHOW_EVERY:
                 draw = True
 
-            quit_, new_state, reward, game_over = env.step(action_, draw)
+            quit_, new_state, reward, game_over = env.step(action, draw)
             new_state = to_numpy_and_flatten(new_state)
 
             # Transform new continuous state to new discrete state and count reward
             episode_reward += reward
 
-
             # Every step we update replay memory and train main network
             agent.update_replay_memory((current_state, action, reward, new_state, game_over))
-            agent.train(game_over, step)
+            if len(agent.replay_memory) >= MIN_REPLAY_MEMORY_SIZE:
+                agent.train(game_over, step, episode)
 
             current_state = new_state
             step += 1
@@ -367,7 +397,7 @@ for i, m in enumerate(models_arch):
             min_reward = min(ep_rewards[-AGGREGATE_STATS_EVERY:])
             max_reward = max(ep_rewards[-AGGREGATE_STATS_EVERY:])
             agent.tensorboard.update_stats(reward_avg=average_reward, reward_min=min_reward, reward_max=max_reward,
-                                           epsilon=epsilon)
+                                           epsilon=epsilon, learning_rate=get_lr())
 
             # Save models, but only when avg reward is greater or equal a set value
             if not episode % SAVE_MODEL_EVERY:

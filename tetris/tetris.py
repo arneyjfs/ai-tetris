@@ -4,12 +4,13 @@ import pygame
 import random
 
 REWARD_NONE = 0
-REWARD_1ROW_CLEARED = 100
+REWARD_1ROW_CLEARED = 150
 REWARD_2ROW_CLEARED = 300
 REWARD_3ROW_CLEARED = 600
-REWARD_4ROW_CLEARED = 1000
+REWARD_4ROW_CLEARED = 1200
 REWARD_LOW_PLACEMENT = 20
-REWARD_GAME_OVER = -1000
+PUNISHMENT_GAME_OVER = -1000
+PUNISHMENT_LEAVING_GAP = -70
 
 colors = [
     (0, 0, 0),
@@ -27,12 +28,12 @@ class Figure:
     y = 0
 
     figures = [
-        [[1, 5, 9, 13], [4, 5, 6, 7]],
+        [[4, 5, 6, 7], [1, 5, 9, 13]],
         [[4, 5, 9, 10], [2, 6, 5, 9]],
         [[6, 7, 9, 10], [1, 5, 6, 10]],
-        [[1, 2, 5, 9], [0, 4, 5, 6], [1, 5, 9, 8], [4, 5, 6, 10]],
-        [[1, 2, 6, 10], [5, 6, 7, 9], [2, 6, 10, 11], [3, 5, 6, 7]],
-        [[1, 4, 5, 6], [1, 4, 5, 9], [4, 5, 6, 9], [1, 5, 6, 9]],
+        [[4, 5, 6, 10], [1, 5, 9, 8], [0, 4, 5, 6], [1, 2, 5, 9]],
+        [[3, 5, 6, 7], [2, 6, 10, 11], [5, 6, 7, 9], [1, 2, 6, 10], ],
+        [[1, 5, 6, 9], [4, 5, 6, 9], [1, 4, 5, 9], [1, 4, 5, 6]],
         [[1, 2, 5, 6]],
     ]
 
@@ -51,7 +52,7 @@ class Figure:
 
 
 class Tetris:
-    level = 2
+    level = 1
     score = 0
     state = "start"
     field = []
@@ -77,7 +78,6 @@ class Tetris:
 
     def new_figure(self):
         self.figure = Figure(3, 0)
-        self.stamina = 1
 
     def intersects(self):
         intersection = False
@@ -114,13 +114,49 @@ class Tetris:
             return REWARD_1ROW_CLEARED
         return REWARD_NONE
 
+    def freeze(self):
+        leftmost_point = 100
+        rightmost_point = 0
+        highest_point = 100
+        lowest_point = 0
+        for i in range(4):
+            for j in range(4):
+                if i * 4 + j in self.figure.image():
+                    self.field[i + self.figure.y][j + self.figure.x] = self.figure.color
+                    if i + self.figure.y < highest_point:
+                        highest_point = i + self.figure.y
+                    if i + self.figure.y > lowest_point:
+                        lowest_point = i + self.figure.y
+                    if j + self.figure.x < leftmost_point:
+                        leftmost_point = j + self.figure.x
+                    if j + self.figure.x > rightmost_point:
+                        rightmost_point = j + self.figure.x
+        reward = self.break_lines()
+        reward += lowest_point
+        gap = False
+        for i in range(highest_point, lowest_point+1):
+            for j in range(leftmost_point, rightmost_point+1):
+                if i + 1 < self.height:
+                    if self.field[i+1][j] == -1:
+                        reward += PUNISHMENT_LEAVING_GAP
+                        gap = True
+                        break
+            if gap: break
+
+        self.new_figure()
+        if self.intersects():
+            self.state = "gameover"
+            reward += PUNISHMENT_GAME_OVER
+        return reward
+
     def go_space(self):
         while not self.intersects():
             self.figure.y += 1
         self.figure.y -= 1
         reward = self.freeze()
         if reward > 0:
-            return reward * self.stamina
+            reward = reward * self.stamina
+            self.stamina = 1
         return reward
 
     def go_down(self):
@@ -129,23 +165,10 @@ class Tetris:
             self.figure.y -= 1
             reward = self.freeze()
             if reward > 0:
-                return reward * self.stamina
+                reward = reward * self.stamina
+                self.stamina = 1
             return reward
         return REWARD_NONE
-
-    def freeze(self):
-        for i in range(4):
-            for j in range(4):
-                if i * 4 + j in self.figure.image():
-                    self.field[i + self.figure.y][j + self.figure.x] = self.figure.color
-        reward = self.break_lines()
-        if reward == REWARD_NONE:
-            reward = self.figure.y
-        self.new_figure()
-        if self.intersects():
-            self.state = "gameover"
-            reward = REWARD_GAME_OVER
-        return reward
 
     def go_side(self, dx):
         self.stamina *= 0.9
@@ -167,13 +190,12 @@ class Environment:
     WIDTH = 10  # Width of the field and the walls
 
     ENVIRONMENT_SHAPE = (HEIGHT, WIDTH, 1)
-    ACTION_SPACE = [0, 1, 2, 3]
+    ACTION_SPACE = [0, 1, 2, 3, 4]
     ACTION_SPACE_SIZE = len(ACTION_SPACE)
 
     def __init__(self, show_game=True):
         self.show_game = show_game
         # Initialize the game engine
-        pygame.init()
 
         # Define some colors
         self.BLACK = (0, 0, 0)
@@ -183,13 +205,14 @@ class Environment:
         size = (400, 500)
 
         if self.show_game:
+            pygame.init()
             self.screen = pygame.display.set_mode(size)
             pygame.display.set_caption("Tetris")
+            self.clock = pygame.time.Clock()
 
         # Loop until the user clicks the close button.
         self.quit = False
-        self.clock = pygame.time.Clock()
-        self.fps = 25
+        self.fps = 10
         self.game = Tetris(20, 10)
         self.counter = 0
         self.state = copy.deepcopy(self.game.field)
@@ -197,7 +220,8 @@ class Environment:
 
     def reset(self):
         self.quit = False
-        self.clock = pygame.time.Clock()
+        if self.show_game:
+            self.clock = pygame.time.Clock()
         self.counter = 0
         self.state = copy.deepcopy(self.game.field)
         self.game_over = False
@@ -249,6 +273,7 @@ class Environment:
         return state
 
     def step(self, action, draw=True):
+        # pygame.event.pump()
         if self.game.figure is None:
             self.game.new_figure()
         self.counter += 1
@@ -256,22 +281,24 @@ class Environment:
             self.counter = 0
 
         reward = REWARD_NONE
-        if action == 'quit':
+        if action == -1:
             self.quit = True
-        elif action == 'rotate':
+        elif action == 0:
             self.game.rotate()
-        elif action == 'left':
+        elif action == 1:
             self.game.go_side(-1)
-        elif action == 'right':
+        elif action == 2:
             self.game.go_side(1)
-        elif action == 'space':
+        elif action == 3:
             reward = self.game.go_space()
-        elif action == 'reset':
+        elif action == 4:
+            reward = self.game.go_down()
+        elif action == 5:
             self.reset()
 
         if self.counter % (self.fps // self.game.level // 2) == 0:  # or self.pressing_down
             if self.game.state == "start":
-                reward = self.game.go_down()
+                reward += self.game.go_down()
 
         if self.game.state == 'gameover':
             self.game_over = True
@@ -283,6 +310,29 @@ class Environment:
 
         return self.quit, self.state, reward, self.game_over
 
+    def get_action(self):
+        action = None
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                action = -1  # 'quit'
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    action = 0  # 'rotate'
+                # if event.key == pygame.K_DOWN:
+                #     self.pressing_down = True
+                if event.key == pygame.K_LEFT:
+                    action = 1  # 'left'
+                if event.key == pygame.K_RIGHT:
+                    action = 2  # 'right'
+                if event.key == pygame.K_SPACE:
+                    action = 3  # 'space'
+                if event.key == pygame.K_DOWN:
+                    action = 4  # 'down'
+                if event.key == pygame.K_RETURN:
+                    action = 5  # 'reset'
+        self.clock.tick(self.fps)
+        return action
+
 
 if __name__ == '__main__':
     env = Environment(True)
@@ -290,28 +340,11 @@ if __name__ == '__main__':
     quit_ = False
     state = None
     while not quit_:
-        action = None
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                action = 'quit'
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP:
-                    action = 'rotate'
-                # if event.key == pygame.K_DOWN:
-                #     self.pressing_down = True
-                if event.key == pygame.K_LEFT:
-                    action = 'left'
-                if event.key == pygame.K_RIGHT:
-                    action = 'right'
-                if event.key == pygame.K_SPACE:
-                    action = 'space'
-                if event.key == pygame.K_RETURN:
-                    action = 'reset'
+        action = env.get_action()
         quit_, state, reward, game_over = env.step(action)
-        env.clock.tick(env.fps)
 
-        if reward != 0:
-            print(reward)
+        # if reward != 0:
+        #     print(reward)
             # pprint.pprint(state)
 
     pygame.quit()
